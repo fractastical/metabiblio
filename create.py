@@ -8,6 +8,7 @@ from collections import defaultdict
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+import json
 import warnings
 
 def pdf_to_image(pdf_path, image_path):
@@ -139,14 +140,14 @@ def create_toc(grouped_titles, font_path, toc_image_paths, toc_data, start_page)
             toc_image_paths.append(toc_image_path)
             page_num += 1
 
-def create_tiled_cover(image_paths, cover_image_path, tile_size=(100, 150), grid_size=(5, 5), font_path=None):
+def create_tiled_cover(image_paths, cover_image_path, tile_size=(100, 150), grid_size=(5, 5), font_path=None, max_images=25):
     cover_width = tile_size[0] * grid_size[0]
     cover_height = tile_size[1] * grid_size[1]
     cover_image = Image.new('RGB', (cover_width, cover_height), color='white')
     
     colorful_images = [img_path for img_path in image_paths if is_colorful(img_path)]
     
-    for i, img_path in enumerate(colorful_images[:grid_size[0] * grid_size[1]]):
+    for i, img_path in enumerate(colorful_images[:min(len(colorful_images), max_images)]):
         img = Image.open(img_path)
         img.thumbnail(tile_size, Image.LANCZOS)
         x = (i % grid_size[0]) * tile_size[0]
@@ -155,13 +156,13 @@ def create_tiled_cover(image_paths, cover_image_path, tile_size=(100, 150), grid
     
     if font_path:
         d = ImageDraw.Draw(cover_image)
-        font = ImageFont.truetype(font_path, size=40)
+        font = ImageFont.truetype(font_path, size=42)
         title_lines = ["Arcane", "Worlds", "Bibliography"]
         y_text = (cover_height - 3 * 40) // 2
         for line in title_lines:
             bbox = d.textbbox((0, 0), line, font=font)
             text_width = bbox[2] - bbox[0]
-            d.text(((cover_width - text_width) // 2, y_text), line, fill='white', font=font)
+            d.text(((cover_width - text_width) // 2, y_text), line, fill='purple', font=font)
             y_text += 40
     
     cover_image.save(cover_image_path)
@@ -209,7 +210,7 @@ def create_final_pdf(image_paths, output_pdf_path, toc_data, font_path):
 
     c.save()
 
-def main(folder_path, output_pdf_path, font_path):
+def main(folder_path, output_pdf_path, font_path, json_path):
     os.makedirs(os.path.dirname(output_pdf_path), exist_ok=True)
     
     all_cover_images_folder = os.path.join(folder_path, "all_cover_images")
@@ -219,7 +220,11 @@ def main(folder_path, output_pdf_path, font_path):
     grouped_titles = defaultdict(list)
     toc_data = []
     meta_toc_data = []
-    
+
+    # Load JSON data
+    with open(json_path, 'r') as f:
+        json_data = json.load(f)
+
     image_counter = 1
     last_folder = None
     for subdir, _, files in os.walk(folder_path):
@@ -234,6 +239,10 @@ def main(folder_path, output_pdf_path, font_path):
                 image_path = os.path.join(all_cover_images_folder, f"{image_counter}_{os.path.splitext(filename)[0].replace(' ', '_')}.png")
                 pdf_to_image(pdf_path, image_path)
                 title = extract_pdf_title(pdf_path, os.path.splitext(filename)[0])
+                if category == "Alchemy":
+                    for text in json_data["texts"]:
+                        if text["title"] == title:
+                            title += f' ({text.get("type", "Book")}, PH: {text.get("PH", "")}, BPH: {text.get("BPH", "")})'
                 image_paths.append(image_path)
                 grouped_titles[category].append(title)
                 print(f"Processed PDF: {filename} as {image_path}")
@@ -243,12 +252,24 @@ def main(folder_path, output_pdf_path, font_path):
                 image_path = os.path.join(all_cover_images_folder, f"{image_counter}_{os.path.splitext(filename)[0].replace(' ', '_')}.png")
                 epub_to_image(epub_path, image_path, font_path)
                 title = extract_epub_title(epub_path, os.path.splitext(filename)[0])
+                if category == "Alchemy":
+                    for text in json_data["texts"]:
+                        if text["title"] == title:
+                            title += f' ({text.get("type", "Book")}, PH: {text.get("PH", "")}, BPH: {text.get("BPH", "")})'
                 image_paths.append(image_path)
                 grouped_titles[category].append(title)
                 print(f"Processed EPUB: {filename} as {image_path}")
                 image_counter += 1
 
     print("\nAll files processed. Creating table of contents...")
+
+    # Add JSON data to the "Alchemy" category
+    for text in json_data["texts"]:
+        title = text["title"]
+        if "type" in text or "PH" in text or "BPH" in text:
+            title += f' ({text.get("type", "Book")}, PH: {text.get("PH", "")}, BPH: {text.get("BPH", "")})'
+        grouped_titles["Alchemy"].append(title)
+        print(f"Added JSON title: {title} to Alchemy")
 
     toc_image_paths = []
     create_meta_toc(grouped_titles, font_path, toc_image_paths, meta_toc_data)
@@ -272,10 +293,9 @@ def main(folder_path, output_pdf_path, font_path):
 
     print("Process completed successfully.")
 
-
-
 if __name__ == "__main__":
+    json_path = "/Users/jd/Documents/books-research/uva/References/alchemy.json"
     folder_path = "/Users/jd/Documents/books-research/uva/References"
-    output_pdf_path = "/Users/jd/Documents/books-research/uva/compiled-references-2.pdf"
+    output_pdf_path = "/Users/jd/Documents/books-research/uva/arcane-worlds-biblio.pdf"
     font_path = "kenpixel.ttf"  # Path to your TrueType font file
-    main(folder_path, output_pdf_path, font_path)
+    main(folder_path, output_pdf_path, font_path, json_path)
